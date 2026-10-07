@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import secrets
+import subprocess
 import sys
 import threading
 import time
@@ -31,6 +32,8 @@ ROOT = Path(__file__).parent
 LIBRARY_RESCAN_SECONDS = 30 * 60
 UPDATE_CHECK_SECONDS = 24 * 3600
 PORT_TRIES = 10            # порты cfg.port … cfg.port+9: первый свободный
+MAX_INTERVAL = 7 * 86400   # дольше Event.wait не ждёт (OverflowError) — да и смысла нет
+PING_IDLE_SECONDS = 120    # без игры пингуем, только пока панель открыта (и чуть после)
 
 
 def _api_error(text, code=400):
@@ -81,6 +84,20 @@ def check_lists(cfg: dict) -> None:
         raise _api_error("not_games: только строки")
 
 
+def loop_interval(value) -> float:
+    """Пауза фонового цикла из настроек: 1 с … неделя, мусор — минута.
+    config.json правят руками: 0, "10", 1e999 не должны ни крутить цикл вхолостую, ни ронять его поток."""
+    try:
+        v = float(value)
+    except OverflowError:   # целое больше float
+        return float(MAX_INTERVAL)
+    except (TypeError, ValueError):
+        return 60.0
+    if v != v:          # NaN
+        return 60.0
+    return min(max(1.0, v), float(MAX_INTERVAL))
+
+
 def disks() -> list[dict]:
     out = []
     for part in psutil.disk_partitions(all=False):
@@ -114,10 +131,11 @@ class Hub:
         self.deals_lock = threading.Lock()
         self.limit_notified = ""      # дата, за которую уже предупреждали о лимите
         self.url = ""
-        self.window_show = None       # показать окно (задаёт run_window)
-        self.request_quit = None      # закрыть программу (задаёт run_window)
+        self.window_show = None       # показать окно (задаёт run_tray)
+        self.request_quit = None      # закрыть программу (задаёт run_tray)
         self.update = None            # {"version", "url", "notes", "page"}, если вышла новая версия
         self.update_notified = ""
+        self.last_view = 0.0          # когда панель последний раз спрашивала данные (она опрашивает только видимой)
         self.rescan()
         self.tracker = tracker.Tracker(
             db, lambda: self.games,
@@ -196,8 +214,10 @@ class Hub:
     # ---------- статистика ----------
     def state(self) -> dict:
         now = time.time()
+        self.last_view = now
         sessions = self.db.sessions()
         summary = stats.summary(sessions, now)
+        claimed = self.db.claimed_deals()
         return {
             "now": now,
             "playing": self.tracker.running(),
@@ -205,7 +225,7 @@ class Hub:
             "gamemode": self._gm_status(),
             "disks": disks(),
             "ping": self.ping_mon.stats(now - 300),
-            "deals_now": sum(1 for d in self.deals_cache["now"] if d["key"] not in self.db.claimed_deals()),
+            "deals_now": sum(1 for d in self.deals_cache["now"] if d["key"] not in claimed),
             "limit": {"daily_minutes": self.cfg["limits"]["daily_minutes"], "today_minutes": round(summary["today"] / 60)},
             "version": updater.VERSION,
             "update": self.update,
@@ -336,7 +356,8 @@ class Hub:
 
     # ---------- сеть ----------
     def ping(self, minutes: int) -> dict:
-        since = time.time() - minutes * 60
+        self.last_view = time.time()
+        since = self.last_view - minutes * 60
         return {"series": self.ping_mon.series(since), "stats": self.ping_mon.stats(since),
                 "targets": self.cfg["ping"]["targets"]}
 
@@ -425,6 +446,10 @@ class Hub:
         threading.Thread(target=run, name="update", daemon=True).start()
         return {"ok": True}
 
+    def ping_needed(self, now: float) -> bool:
+        """Пинг нужен во время игры (пишется в сессию) или пока панель открыта; в трее без игры — тишина."""
+        return bool(self.tracker.running()) or now - self.last_view < PING_IDLE_SECONDS
+
     # ---------- фоновые циклы ----------
     def _loop(self, name, interval_fn, fn, first_delay=0.0):
         def run():
@@ -435,8 +460,11 @@ class Hub:
                     fn()
                 except Exception:
                     log.exception("ошибка в цикле %s", name)
-                # минимум 1 с: ноль или минус в config.json не должен крутить цикл вхолостую
-                if self.stop_event.wait(max(1.0, float(interval_fn()))):
+                try:
+                    pause = loop_interval(interval_fn())
+                except Exception:
+                    pause = 60.0
+                if self.stop_event.wait(pause):
                     return
         threading.Thread(target=run, name=name, daemon=True).start()
 
@@ -446,7 +474,7 @@ class Hub:
             self._check_limit()
 
         def ping():
-            if self.cfg["ping"]["enabled"]:
+            if self.cfg["ping"]["enabled"] and self.ping_needed(time.time()):
                 self.ping_mon.sample()
 
         def fetch_deals():
@@ -485,41 +513,86 @@ def make_icon_image(size=64):
     return img
 
 
-def run_window(hub: Hub, url: str, hidden: bool, on_exit) -> None:
-    """Окно GameHub (pywebview, движок Edge) + иконка в трее. Крестик прячет окно в трей."""
-    import pystray
-    import webview
+# ---------- окно ----------
+# Окно — отдельный процесс (GameHub.exe --window): движок Edge держит сотни МБ, даже спрятанный.
+# Крестик закрывает процесс целиком, в трее остаётся лёгкий процесс с учётом игр, сервером и иконкой.
 
-    window = webview.create_window("GameHub", url, width=1440, height=900, min_size=(1000, 680),
-                                   background_color="#0b0c0a", hidden=hidden)
-    quitting = threading.Event()
+def window_command() -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--window"]
+    return [sys.executable, str(ROOT / "app.py"), "--window"]
 
-    def on_closing():
-        if quitting.is_set():
-            return True
-        window.hide()
-        return False      # не закрывать, а спрятать: учёт игр работает дальше
 
-    def show(icon=None, item=None):
-        window.show()
+def _process_tree(pid: int) -> list[psutil.Process]:
+    try:
+        proc = psutil.Process(pid)
+        return [proc] + proc.children(recursive=True)
+    except psutil.Error:
+        return []
+
+
+def kill_tree(pid: int) -> None:
+    for proc in reversed(_process_tree(pid)):
         try:
-            window.restore()   # если окно было свёрнуто
-        except Exception:
+            proc.terminate()
+        except psutil.Error:
             pass
 
-    def toggle_gm(icon, item):
-        hub.gamemode_action("off" if hub.gm.active else "on")
 
-    def kill(icon, item):
-        killed = hub.gamemode_action("kill")["killed"]
-        notify.toast("Режим игры", "Закрыто: " + ", ".join(killed) if killed else "Нечего закрывать")
+def focus_process_window(pid: int) -> None:
+    """Поднять окно уже открытой панели (из исходников окно у дочернего python, поэтому смотрим всё дерево)."""
+    import ctypes
+    from ctypes import wintypes
+    pids = {p.pid for p in _process_tree(pid)}
+    user32 = ctypes.windll.user32
+    found = []
 
-    def quit_app(icon=None, item=None):
-        if quitting.is_set():
-            return
-        quitting.set()
-        tray.stop()
-        window.destroy()   # webview.start() вернётся, дальше on_exit()
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value in pids and user32.IsWindowVisible(hwnd) and user32.GetWindowTextLengthW(hwnd):
+            found.append(hwnd)
+        return True
+
+    user32.EnumWindows(each, 0)
+    for hwnd in found[:1]:
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)   # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+
+
+class WindowProc:
+    """Процесс окна панели: открыть (или поднять уже открытое) и закрыть при выходе."""
+
+    def __init__(self, url: str, popen=subprocess.Popen):
+        self.url = url
+        self.proc = None
+        self.lock = threading.Lock()
+        self._popen = popen
+
+    def open(self) -> None:
+        with self.lock:
+            if self.proc is not None and self.proc.poll() is None:
+                focus_process_window(self.proc.pid)
+                return
+            # адрес с ключом — через окружение: командную строку видят другие программы
+            self.proc = self._popen(window_command(), env={**os.environ, "GAMEHUB_URL": self.url})
+
+    def close(self) -> None:
+        with self.lock:
+            if self.proc is not None and self.proc.poll() is None:
+                kill_tree(self.proc.pid)
+
+
+def run_window_process() -> None:
+    """Точка входа процесса окна (--window): только pywebview, закрыли — процесс завершился."""
+    import webview
+    url = os.environ.pop("GAMEHUB_URL", "")    # дочерним процессам движка ключ ни к чему
+    if not url:
+        return
+    window = webview.create_window("GameHub", url, width=1440, height=900, min_size=(1000, 680),
+                                   background_color="#0b0c0a")
 
     def dark_titlebar():
         # тёмная шапка окна Windows 11 (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
@@ -531,8 +604,28 @@ def run_window(hub: Hub, url: str, hidden: bool, on_exit) -> None:
         except Exception:
             log.debug("тёмная шапка не включилась", exc_info=True)
 
-    window.events.closing += on_closing
     window.events.shown += dark_titlebar
+    webview.start()
+
+
+def run_tray(hub: Hub, url: str, hidden: bool, on_exit) -> None:
+    """Иконка в трее (блокирует до «Выход»), окно панели — по требованию отдельным процессом."""
+    import pystray
+    win = WindowProc(url)
+
+    def show(icon=None, item=None):
+        win.open()
+
+    def toggle_gm(icon, item):
+        hub.gamemode_action("off" if hub.gm.active else "on")
+
+    def kill(icon, item):
+        killed = hub.gamemode_action("kill")["killed"]
+        notify.toast("Режим игры", "Закрыто: " + ", ".join(killed) if killed else "Нечего закрывать")
+
+    def quit_app(icon=None, item=None):
+        tray.stop()      # tray.run() вернётся, дальше закрытие
+
     menu = pystray.Menu(
         pystray.MenuItem("Открыть GameHub", show, default=True),
         pystray.MenuItem("Режим игры", toggle_gm, checked=lambda item: hub.gm.active),
@@ -541,12 +634,16 @@ def run_window(hub: Hub, url: str, hidden: bool, on_exit) -> None:
         pystray.MenuItem("Выход", quit_app),
     )
     tray = pystray.Icon("GameHub", make_icon_image(), "GameHub", menu)
-    tray.run_detached()
     notify.set_sink(lambda title, body: tray.notify(body, title))
     hub.window_show = show
     hub.request_quit = quit_app
-    webview.start()
-    on_exit()
+    if not hidden:
+        win.open()
+    try:
+        tray.run()
+    finally:
+        win.close()
+        on_exit()
 
 
 def _local_open(req, timeout):
@@ -577,9 +674,9 @@ def is_gamehub(url: str) -> bool:
         return bool(headers and headers.get("Server", "").startswith("GameHub"))
 
 
-def setup_logging() -> None:
+def setup_logging(name="gamehub.log") -> None:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    handler = RotatingFileHandler(config.DATA_DIR / "gamehub.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+    handler = RotatingFileHandler(config.DATA_DIR / name, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -602,16 +699,18 @@ def load_config() -> dict:
         return config.load()
 
 
-def find_running(ports) -> int | None:
-    """Порт уже запущенного GameHub или None."""
-    # HTTP только к занятым портам: в Windows соединение с закрытым портом висит ~2 с
-    for port in ports:
-        if port_busy(port) and is_gamehub(f"http://127.0.0.1:{port}"):
-            return port
-    return None
-
-
 INSTANCE_FILE = "instance.json"   # порт и ключ запущенного GameHub (папка данных доступна только владельцу)
+
+
+def find_running(ports) -> int | None:
+    """Порт уже запущенного GameHub или None.
+    Только порт из instance.json: перебор диапазона отдал бы ключ любой программе,
+    занявшей порт раньше и назвавшейся GameHub (на 127.0.0.1 порты общие для всех пользователей ПК)."""
+    port = read_instance().get("port")
+    # HTTP только к занятому порту: в Windows соединение с закрытым портом висит ~2 с
+    if isinstance(port, int) and port in ports and port_busy(port) and is_gamehub(f"http://127.0.0.1:{port}"):
+        return port
+    return None
 
 
 def write_instance(port: int, token: str) -> None:
@@ -621,16 +720,28 @@ def write_instance(port: int, token: str) -> None:
     os.replace(tmp, path)
 
 
-def read_token() -> str:
+def read_instance() -> dict:
     try:
-        return str(json.loads((config.DATA_DIR / INSTANCE_FILE).read_text(encoding="utf-8"))["token"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return ""
+        data = json.loads((config.DATA_DIR / INSTANCE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def read_token() -> str:
+    token = read_instance().get("token")
+    return token if isinstance(token, str) else ""
 
 
 def show_running(port: int) -> None:
     """Попросить запущенный GameHub показать окно (второй запуск ярлыка)."""
+    import ctypes
     import urllib.request
+    # окно откроет уже запущенный GameHub — разрешаем ему встать поверх (иначе Windows покажет его сзади)
+    try:
+        ctypes.windll.user32.AllowSetForegroundWindow(-1)   # ASFW_ANY
+    except (AttributeError, OSError):
+        pass
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/window/show", data=b"{}", method="POST",
                                  headers={"X-GameHub": read_token(), "Content-Type": "application/json"})
     try:
@@ -651,6 +762,10 @@ def bind_server(hub, ports, token):
 
 
 def main() -> None:
+    if "--window" in sys.argv:       # процесс окна: свой лог, чтобы два процесса не делили один файл
+        setup_logging("window.log")
+        run_window_process()
+        return
     setup_logging()
     cfg = load_config()
     base = cfg["port"]
@@ -691,7 +806,7 @@ def main() -> None:
         except KeyboardInterrupt:
             on_exit()
         return
-    run_window(hub, url, "--hidden" in sys.argv, on_exit)
+    run_tray(hub, url, "--hidden" in sys.argv, on_exit)
 
 
 if __name__ == "__main__":

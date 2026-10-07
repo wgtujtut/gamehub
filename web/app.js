@@ -554,7 +554,15 @@ function route() {
 
 /* ================= Главная ================= */
 
-const home = {offset: 0, playKey: null, topKey: null, topRefs: [], gm: null, busy: false};
+const home = {offset: 0, playKey: null, topKey: null, topRefs: [], gm: null, busy: false, last: {}};
+
+// Перестроить блок, только если его данные поменялись: опрос идёт постоянно, а цифры меняются редко
+function changed(key, data) {
+  const s = JSON.stringify(data ?? null);
+  if (home.last[key] === s) return false;
+  home.last[key] = s;
+  return true;
+}
 
 const TILES = [
   ['today', 'Сегодня', 'dur'],
@@ -569,9 +577,10 @@ const TILES = [
 function homeEnter() {
   const d = new Date().toLocaleDateString('ru-RU', {weekday: 'long', day: 'numeric', month: 'long'});
   $('#home-date').textContent = d.charAt(0).toUpperCase() + d.slice(1);
+  home.last = {};       // вернулись на вкладку — рисуем заново
   homePoll();
   loadHomeHeat();
-  every(homePoll, 2000);
+  every(homePoll, 5000);   // трекер видит игры раз в 10 с, пинг — раз в 5 с: чаще спрашивать незачем
   every(homeTick, 1000);
   every(loadHomeHeat, 60000);
 }
@@ -591,11 +600,11 @@ async function homePoll() {
 function renderHome(st) {
   const sum = st.summary || {};
   renderPlaying(st);
-  renderTiles(sum);
-  renderLimit(st.limit);
+  if (changed('tiles', TILES.map(([k]) => sum[k]))) renderTiles(sum);
+  if (changed('limit', st.limit)) renderLimit(st.limit);
   renderTopWeek(sum.top_week);
-  renderDisks(st.disks);
-  renderHomePing(st.ping);
+  if (changed('disks', st.disks)) renderDisks(st.disks);
+  if (changed('ping', st.ping)) renderHomePing(st.ping);
   $('#deals-count').textContent = st.deals_now ?? '—';
   renderGamemode(st.gamemode);
   homeTick();

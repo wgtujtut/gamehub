@@ -163,3 +163,8 @@ def test_static_and_cover_without_token(srv):
     port, _ = srv
     # картинки и страница не секрет; данные и действия — только с ключом
     assert request(port, "GET", "/cover/steam%3A730", token=None)[0] == 302
+
+def test_empty_token_refused():
+    # пустой ключ отключил бы проверку — сервер с ним не создаётся
+    with pytest.raises(ValueError):
+        server.make_handler(object(), 8790, "")

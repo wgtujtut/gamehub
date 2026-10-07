@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import urllib.request
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 REPO = "wgtujtut/gamehub"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 # скачиваем установщик только из релизов своего репозитория

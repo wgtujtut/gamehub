@@ -24,7 +24,8 @@ KNOWN_NAMES = {
 
 # системные и свои процессы — не трогать никогда
 PROTECTED = {"explorer", "csrss", "winlogon", "services", "lsass", "svchost", "system",
-             "dwm", "smss", "wininit", "python", "pythonw"}
+             "dwm", "smss", "wininit", "python", "pythonw",
+             "gamehub", "msedgewebview2"}   # сам GameHub и движок его окна
 
 # GUID, имя в скобках и необязательная * в конце строки
 _SCHEME_RE = re.compile(
@@ -121,12 +122,12 @@ class GameMode:
         self._previous = None   # схема до включения режима
         self._changed = False   # меняли ли схему
         self._lock = threading.Lock()
-        self._cache = (0.0, [])   # (время, схемы): status зовут каждые 2 с, а powercfg медленный
+        self._cache = (0.0, [])   # (время, схемы): status зовёт открытая панель, а powercfg — отдельный процесс
 
     def _schemes(self, fresh=False):
-        """Список схем с кэшем на 10 с."""
+        """Список схем с кэшем на минуту (свои переключения сбрасывают кэш сразу)."""
         ts, schemes = self._cache
-        if fresh or time.monotonic() - ts > 10:
+        if fresh or time.monotonic() - ts > 60:
             schemes = self.list_fn()
             self._cache = (time.monotonic(), schemes)
         return schemes

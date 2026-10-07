@@ -40,6 +40,8 @@ def _need(body, key, kind: type = str):
 
 def make_handler(hub, port, token):
     """token — секрет этого запуска: без него /api/* не отвечает (другие программы и пользователи ПК его не знают)."""
+    if not token:
+        raise ValueError("пустой ключ отключил бы проверку доступа")
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     get_routes = {

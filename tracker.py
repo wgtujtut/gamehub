@@ -23,19 +23,27 @@ def norm(path: str) -> str:
     return os.path.normcase(os.path.normpath(path))
 
 
-def match_game(exe_path: str, games: list[dict]) -> str | None:
-    """id игры, в чьей install_dir лежит exe (самое длинное совпадение), иначе None."""
+def game_prefixes(games: list[dict]) -> list[tuple[str, str]]:
+    """(папка игры с разделителем на конце, id), самые длинные первыми — считается раз за проход, а не на каждый процесс."""
+    out = [(norm(g["install_dir"]).rstrip(os.sep) + os.sep, g["id"])   # граница по разделителю
+           for g in games if not g.get("not_game") and g.get("install_dir")]
+    out.sort(key=lambda x: len(x[0]), reverse=True)
+    return out
+
+
+def match_exe(exe_path: str, prefixes: list[tuple[str, str]]) -> str | None:
     if os.path.basename(exe_path).lower() in IGNORE_EXE:
         return None
     exe = norm(exe_path)
-    best_id, best_len = None, -1
-    for g in games:
-        if g.get("not_game") or not g.get("install_dir"):
-            continue
-        prefix = norm(g["install_dir"]).rstrip(os.sep) + os.sep  # граница по разделителю
-        if exe.startswith(prefix) and len(prefix) > best_len:
-            best_id, best_len = g["id"], len(prefix)
-    return best_id
+    for prefix, game_id in prefixes:
+        if exe.startswith(prefix):
+            return game_id
+    return None
+
+
+def match_game(exe_path: str, games: list[dict]) -> str | None:
+    """id игры, в чьей install_dir лежит exe (самое длинное совпадение), иначе None."""
+    return match_exe(exe_path, game_prefixes(games))
 
 
 def list_processes() -> list[tuple[int, str, str]]:
@@ -71,8 +79,9 @@ class Tracker:
         games = self.get_games()
         by_id = {g["id"]: g for g in games}
         running = set()
+        prefixes = game_prefixes(games)
         for _pid, _name, exe in self.list_procs():
-            gid = match_game(exe, games)
+            gid = match_exe(exe, prefixes)
             if gid:
                 running.add(gid)
 

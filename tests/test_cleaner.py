@@ -240,16 +240,16 @@ def test_min_age_keeps_fresh_files(tmp_path):
 
 
 def test_temp_target_has_min_age(tmp_path):
-    (tmp_path / "t").mkdir()
+    (tmp_path / "Temp").mkdir()
     (tmp_path / "l" / "CrashDumps").mkdir(parents=True)
-    ts = {t["id"]: t for t in cleaner.targets([], env={"TEMP": str(tmp_path / "t"), "LOCALAPPDATA": str(tmp_path / "l")})}
+    ts = {t["id"]: t for t in cleaner.targets([], env={"TEMP": str(tmp_path / "Temp"), "LOCALAPPDATA": str(tmp_path / "l")})}
     assert ts["temp"]["min_age"] == 86400
     assert ts["crashdumps"]["min_age"] == 0
 
 
 def test_pip_cache_dir_env(tmp_path):
     moved = tmp_path / "D" / "cache" / "pip"
-    moved.mkdir(parents=True)
+    (moved / "http-v2").mkdir(parents=True)
     (tmp_path / "l" / "pip" / "cache").mkdir(parents=True)
     ts = {t["id"]: t for t in cleaner.targets([], env={"LOCALAPPDATA": str(tmp_path / "l"), "PIP_CACHE_DIR": str(moved)})}
     assert ts["pip"]["paths"] == [str(moved)]
@@ -277,3 +277,22 @@ def test_clean_refuses_dangerous_root(monkeypatch, tmp_path):
     monkeypatch.setattr(cleaner, "is_safe_root", lambda p, env=None: False)
     res = cleaner.clean([str(victim)])
     assert res["skipped"] == 1 and (victim / "important.txt").exists()
+
+
+def test_env_temp_must_look_like_temp(tmp_path):
+    # TEMP указывает на обычную папку с данными — не чистим
+    (tmp_path / "Games" / "Saves").mkdir(parents=True)
+    ts = by_id(cleaner.targets([], env={"TEMP": str(tmp_path / "Games" / "Saves")}))
+    assert "temp" not in ts
+    (tmp_path / "AppData" / "Local" / "Temp" / "2").mkdir(parents=True)
+    ts = by_id(cleaner.targets([], env={"TEMP": str(tmp_path / "AppData" / "Local" / "Temp" / "2")}))
+    assert "temp" in ts
+
+
+def test_env_pip_cache_must_look_like_pip(tmp_path):
+    (tmp_path / "proj" / "src").mkdir(parents=True)
+    ts = by_id(cleaner.targets([], env={"PIP_CACHE_DIR": str(tmp_path / "proj")}))
+    assert "pip" not in ts
+    (tmp_path / "proj" / "http-v2").mkdir()
+    ts = by_id(cleaner.targets([], env={"PIP_CACHE_DIR": str(tmp_path / "proj")}))
+    assert "pip" in ts

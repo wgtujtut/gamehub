@@ -30,6 +30,8 @@ class DB:
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # без fsync на каждую запись (heartbeat раз в poll_seconds); с WAL база при сбое не портится
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(SCHEMA)
             self._conn.commit()
 

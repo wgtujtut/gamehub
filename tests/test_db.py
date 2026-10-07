@@ -106,3 +106,10 @@ def test_kv(db):
     assert db.kv_get("sizes") == {"custom:tarkov": 50_000_000_000, "имя": "Тарков"}
     db.kv_set("sizes", {"x": 1})
     assert db.kv_get("sizes") == {"x": 1}
+
+
+def test_wal_synchronous_normal(tmp_path):
+    # NORMAL в режиме WAL: без fsync на каждый heartbeat, база при сбое не портится
+    from db import DB
+    d = DB(tmp_path / "x.db")
+    assert d._read("PRAGMA synchronous")[0][0] == 1

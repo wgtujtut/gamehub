@@ -9,7 +9,7 @@
 
 ```
 gamehub/
-  app.py          — точка входа: потоки, трей, сервер (пишет архитектор)
+  app.py          — точка входа: потоки, трей, сервер; окно — отдельный процесс app.py --window
   server.py       — HTTP API (пишет архитектор)
   config.py       — настройки
   library.py      — установленные игры (Steam, Epic, свои)
@@ -371,7 +371,7 @@ class GameMode:
 def targets(steam_libs: list[Path], env: dict | None = None) -> list[dict]
 ```
 env по умолчанию os.environ (TEMP, LOCALAPPDATA, APPDATA). Только существующие пути (glob раскрыть). Список:
-- `temp` — Временные файлы: `%TEMP%`. default True
+- `temp` — Временные файлы: `%TEMP%` (только если папка называется Temp/Tmp или это его подпапка-номер сеанса). default True
 - `nvidia` — Кэш шейдеров NVIDIA: `%LOCALAPPDATA%\NVIDIA\DXCache`, `%LOCALAPPDATA%\NVIDIA\GLCache`, `%LOCALAPPDATA%\NVIDIA Corporation\NV_Cache`. note «пересоберётся, первые минуты в игре могут быть подлагивания». default False
 - `d3d` — Кэш шейдеров DirectX: `%LOCALAPPDATA%\D3DSCache`. default False (та же note)
 - `steam_shader` — Кэш шейдеров Steam: `<lib>\steamapps\shadercache` для всех библиотек. default False (та же note)
@@ -381,7 +381,7 @@ env по умолчанию os.environ (TEMP, LOCALAPPDATA, APPDATA). Тольк
 - `firefox` — Кэш Firefox: `%LOCALAPPDATA%\Mozilla\Firefox\Profiles\*\cache2`. default True
 - `crashdumps` — Дампы падений: `%LOCALAPPDATA%\CrashDumps`. default True
 - `epic` — Кэш Epic Launcher: `%LOCALAPPDATA%\EpicGamesLauncher\Saved\webcache*`. default True
-- `pip` — Кэш pip: `%LOCALAPPDATA%\pip\cache`. default False
+- `pip` — Кэш pip: `%PIP_CACHE_DIR%` (только если внутри есть http, http-v2, wheels или selfcheck), иначе `%LOCALAPPDATA%\pip\cache`. default False
 Цель, у которой не осталось ни одного пути, не возвращать.
 
 ```python
@@ -423,7 +423,7 @@ class PingMonitor:
 
 Все ответы JSON. Все запросы к /api/* — с заголовком `X-GameHub: <ключ запуска>` (без него 403); POST — тело JSON. Ошибка → `{"error": "текст"}` с кодом 4xx/5xx.
 
-`GET /api/state` — главная, опрашивается каждые 2 с:
+`GET /api/state` — главная, опрашивается каждые 5 с (только пока панель видна):
 ```json
 {
   "now": 1791100000.0,

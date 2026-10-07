@@ -238,3 +238,9 @@ def test_parse_schemes_question_marks():
     assert s[0]["name"] == "Максимальная производительность" and s[0]["active"]
     assert s[1]["name"] == "Своя схема"
     assert s[2]["name"] == "My High"
+
+
+def test_kill_never_self():
+    procs = [FakeProc(1, "GameHub.exe"), FakeProc(2, "msedgewebview2.exe")]
+    assert gamemode.kill_processes(["gamehub", "msedgewebview2"], iter_procs=lambda: procs) == []
+    assert not procs[0].terminated and not procs[1].terminated

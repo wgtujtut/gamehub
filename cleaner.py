@@ -54,10 +54,30 @@ def _is_link(path):
     return os.path.islink(path) or os.path.isjunction(path)
 
 
+def _env_dir(path, check):
+    """Папка из переменной окружения — только если похожа на то, чем назвалась (TEMP=D:\\Игры не чистим)."""
+    if not path or not os.path.isdir(path):
+        return None
+    return path if check(_norm(path)) else None
+
+
+def _looks_temp(p):
+    # ...\Temp или ...\Temp\2 (подпапка сеанса удалённого рабочего стола)
+    head, name = os.path.split(p.rstrip(os.sep))
+    if name.isdigit():
+        name = os.path.basename(head)
+    return name in ("temp", "tmp")
+
+
+def _looks_pip(p):
+    return any(os.path.isdir(os.path.join(p, x)) for x in ("http", "http-v2", "wheels", "selfcheck"))
+
+
 def targets(steam_libs, env=None):
     """Список целей для чистки; только существующие пути."""
     env = os.environ if env is None else env
-    temp = env.get("TEMP")
+    temp = _env_dir(env.get("TEMP"), _looks_temp)
+    pip = _env_dir(env.get("PIP_CACHE_DIR"), _looks_pip)
     local = env.get("LOCALAPPDATA")
     roaming = env.get("APPDATA")
     raw = [
@@ -86,7 +106,7 @@ def targets(steam_libs, env=None):
         ("epic", "Кэш Epic Launcher",
          [_p(local, "EpicGamesLauncher", "Saved", "webcache*")], "", True),
         # PIP_CACHE_DIR — если кэш перенесён (у пользователя он на D:\cache\pip)
-        ("pip", "Кэш pip", [_p(env.get("PIP_CACHE_DIR")) or _p(local, "pip", "cache")], "", False),
+        ("pip", "Кэш pip", [_p(pip) or _p(local, "pip", "cache")], "", False),
     ]
     result = []
     for tid, name, patterns, note, default in raw:

@@ -196,3 +196,81 @@ def test_instance_token_roundtrip(tmp_path, monkeypatch):
     assert app.read_token() == "abc"
     (tmp_path / app.INSTANCE_FILE).write_text("мусор", encoding="utf-8")
     assert app.read_token() == ""
+
+
+def test_find_running_only_instance_port(tmp_path, monkeypatch):
+    # чужой сервер на другом порту диапазона не должен получить ключ: смотрим только порт из instance.json
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(app, "port_busy", lambda p: True)
+    monkeypatch.setattr(app, "is_gamehub", lambda url: True)
+    ports = range(8790, 8800)
+    assert app.find_running(ports) is None          # instance.json нет
+    app.write_instance(8795, "abc")
+    assert app.find_running(ports) == 8795
+    app.write_instance(9999, "abc")
+    assert app.find_running(ports) is None          # порт вне диапазона
+
+
+@pytest.mark.parametrize("value, expected", [
+    (10, 10.0), (0, 1.0), (-5, 1.0), (float("inf"), 7 * 86400), (float("nan"), 60.0),
+    ("abc", 60.0), (None, 60.0), (10 ** 400, 7 * 86400),
+])
+def test_loop_interval(value, expected):
+    assert app.loop_interval(value) == expected
+
+
+def test_ping_needed():
+    hub = FakeHub([])
+    hub.tracker = type("T", (), {"running": lambda self: []})()
+    hub.last_view = 0.0
+    assert not hub.ping_needed(1000.0)               # окно закрыто, игр нет — пинг не нужен
+    hub.last_view = 950.0
+    assert hub.ping_needed(1000.0)                   # панель открыта недавно
+    hub.last_view = 0.0
+    hub.tracker = type("T", (), {"running": lambda self: [{"game_id": "x"}]})()
+    assert hub.ping_needed(1000.0)                   # идёт игра — пинг пишется в сессию
+
+
+class FakeProc:
+    def __init__(self, cmd, env):
+        self.cmd, self.env, self.pid, self.code = cmd, env, 4242, None
+
+    def poll(self):
+        return self.code
+
+
+def test_window_command(monkeypatch):
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    assert app.window_command() == [app.sys.executable, "--window"]
+    monkeypatch.delattr(app.sys, "frozen")
+    assert app.window_command() == [app.sys.executable, str(app.ROOT / "app.py"), "--window"]
+
+
+def test_window_proc_spawn_focus_respawn(monkeypatch):
+    spawned, focused = [], []
+    monkeypatch.setattr(app, "focus_process_window", focused.append)
+
+    def popen(cmd, env):
+        spawned.append(FakeProc(cmd, env))
+        return spawned[-1]
+
+    win = app.WindowProc("http://127.0.0.1:8790/?t=secret", popen=popen)
+    win.open()
+    assert len(spawned) == 1
+    assert spawned[0].env["GAMEHUB_URL"] == "http://127.0.0.1:8790/?t=secret"
+    assert not any("secret" in a for a in spawned[0].cmd)    # ключ не в командной строке
+    win.open()                       # окно уже открыто — только поднять его
+    assert len(spawned) == 1 and focused == [4242]
+    spawned[0].code = 0              # закрыли крестиком — процесс завершился
+    win.open()
+    assert len(spawned) == 2
+
+
+def test_window_proc_close(monkeypatch):
+    killed = []
+    monkeypatch.setattr(app, "kill_tree", killed.append)
+    win = app.WindowProc("u", popen=lambda cmd, env: FakeProc(cmd, env))
+    win.close()                      # окна нет — ничего
+    win.open()
+    win.close()
+    assert killed == [4242]
