@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GameHub</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23c6ff3d'/%3E%3Cpath d='M9 7.5v9l7.5-4.5z' fill='%230b0d06'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="update-bar" class="update-bar" hidden>
+  <span id="update-text">Вышла новая версия</span>
+  <button type="button" class="btn primary sm" id="update-go">Обновить</button>
+  <button type="button" class="btn sm" id="update-notes">Что нового</button>
+  <button type="button" class="btn ghost sm" id="update-hide" title="Скрыть до следующей версии">Позже</button>
+</div>
+<div id="offline" class="offline" hidden>
+  <b>GameHub не запущен</b>
+  <span>Запусти приложение — панель переподключится сама.</span>
+</div>
+
+<!-- Боковая навигация -->
+<aside class="sidebar">
+  <a class="brand" href="#home">
+    <span class="brand-mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 7.5v9l7.5-4.5z"/></svg></span>
+    <span>GAME<b>HUB</b></span>
+  </a>
+  <nav class="nav">
+    <a href="#home" data-view="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v10.5a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9"/></svg>
+      <span>Главная</span>
+    </a>
+    <a href="#library" data-view="library">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10a5 5 0 0 1 4.9 6l-.6 3a2.8 2.8 0 0 1-4.9 1.2L14.6 15H9.4l-1.8 2.2A2.8 2.8 0 0 1 2.7 16l-.6-3A5 5 0 0 1 7 7z"/><path d="M8 10v3M6.5 11.5h3"/><path d="M15.5 10.5h.01M17.5 12.5h.01"/></svg>
+      <span>Библиотека</span>
+    </a>
+    <a href="#stats" data-view="stats">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M7 16v-5M12 16V6M17 16v-8"/></svg>
+      <span>Статистика</span>
+    </a>
+    <a href="#deals" data-view="deals">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="8" width="17" height="4.5" rx="1"/><path d="M5 12.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19v-6.5M12 8v12.5"/><path d="M12 8c-1-2.8-2.6-4.5-4.3-4.5a2.25 2.25 0 0 0 0 4.5M12 8c1-2.8 2.6-4.5 4.3-4.5a2.25 2.25 0 0 1 0 4.5"/></svg>
+      <span>Халява</span>
+    </a>
+    <a href="#clean" data-view="clean">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5 11.6 8l4.4 1.6-4.4 1.6L10 15.6l-1.6-4.4L4 9.6 8.4 8z"/><path d="m17.5 13.5.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z"/></svg>
+      <span>Чистка</span>
+    </a>
+    <a href="#net" data-view="net">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></svg>
+      <span>Сеть</span>
+    </a>
+    <a href="#settings" data-view="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+      <span>Настройки</span>
+    </a>
+  </nav>
+  <div class="side-foot"><span class="dot good" id="srv-dot"></span><span id="srv-addr">GameHub</span></div>
+</aside>
+
+<main class="main">
+
+  <!-- Главная -->
+  <section class="view" id="view-home" hidden>
+    <header class="page-head">
+      <div><h1>Главная</h1><p class="sub" id="home-date"></p></div>
+    </header>
+
+    <div class="home-top">
+      <div class="now card" id="now-playing"></div>
+      <div class="home-side">
+        <div class="card gm-card" id="gm-card">
+          <div class="card-label">Режим игры</div>
+          <div class="gm-row">
+            <div>
+              <div class="gm-state" id="gm-state">—</div>
+              <div class="muted small" id="gm-scheme"></div>
+            </div>
+            <button type="button" class="btn" id="gm-toggle"><span>Включить</span></button>
+          </div>
+        </div>
+        <a class="card deals-card" href="#deals">
+          <div class="card-label">Халява сейчас</div>
+          <div class="big-num" id="deals-count">—</div>
+          <div class="muted small">бесплатные игры в Epic, Steam и GOG &rarr;</div>
+        </a>
+      </div>
+    </div>
+
+    <div class="tiles" id="home-tiles"></div>
+    <div class="card limit" id="home-limit" hidden></div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h2>Топ недели</h2></div>
+        <div id="home-top"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Активность</h2><span class="muted small">последние 20 недель</span></div>
+        <div id="home-heat"></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h2>Диски</h2></div>
+        <div id="home-disks"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Пинг</h2><a class="link small" href="#net">подробнее &rarr;</a></div>
+        <div id="home-ping"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Библиотека -->
+  <section class="view" id="view-library" hidden>
+    <header class="page-head">
+      <div><h1>Библиотека</h1><p class="sub" id="lib-count"></p></div>
+      <button type="button" class="btn" id="lib-rescan">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></svg>
+        <span>Пересканировать</span>
+      </button>
+    </header>
+    <div class="toolbar">
+      <input type="search" class="input search" id="lib-search" placeholder="Поиск по названию" autocomplete="off">
+      <div class="seg" id="lib-source">
+        <button type="button" data-v="all" class="on">Все</button>
+        <button type="button" data-v="steam">Steam</button>
+        <button type="button" data-v="epic">Epic</button>
+        <button type="button" data-v="custom">Другие</button>
+      </div>
+      <select class="input" id="lib-sort">
+        <option value="recent">Недавние</option>
+        <option value="played">Наиграно больше</option>
+        <option value="size">По размеру</option>
+        <option value="alpha">По алфавиту</option>
+      </select>
+      <label class="check"><input type="checkbox" class="cb" id="lib-notgames"><span>Показать не-игры</span></label>
+    </div>
+    <div id="lib-stale"></div>
+    <div class="lib-grid" id="lib-grid"></div>
+  </section>
+
+  <!-- Статистика -->
+  <section class="view" id="view-stats" hidden>
+    <header class="page-head">
+      <div><h1>Статистика</h1><p class="sub" id="st-sub"></p></div>
+      <div class="seg" id="st-range">
+        <button type="button" data-v="7">7 дней</button>
+        <button type="button" data-v="30" class="on">30 дней</button>
+        <button type="button" data-v="90">90 дней</button>
+        <button type="button" data-v="365">Год</button>
+      </div>
+    </header>
+    <div class="card">
+      <div class="card-head"><h2>По дням</h2><div class="legend" id="st-legend"></div></div>
+      <div class="chart" id="st-chart"></div>
+    </div>
+    <div class="grid-2 wide-left">
+      <div class="card">
+        <div class="card-head"><h2>Игры за период</h2></div>
+        <div class="tbl-wrap" id="st-games"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Когда играешь</h2></div>
+        <div class="when" id="st-when"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Год активности</h2><span class="muted small" id="st-year-total"></span></div>
+      <div class="heat-scroll" id="st-heat"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Последние сессии</h2></div>
+      <div class="tbl-wrap" id="st-sessions"></div>
+    </div>
+  </section>
+
+  <!-- Халява -->
+  <section class="view" id="view-deals" hidden>
+    <header class="page-head">
+      <div><h1>Халява</h1><p class="sub" id="deals-sub"></p></div>
+      <button type="button" class="btn" id="deals-refresh">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></svg>
+        <span>Обновить</span>
+      </button>
+    </header>
+    <p class="errors" id="deals-errors" hidden></p>
+    <h2 class="section-title">Бесплатно сейчас <span class="count" id="deals-now-count"></span></h2>
+    <div class="deals-grid" id="deals-now"></div>
+    <h2 class="section-title">Скоро бесплатно <span class="count dim" id="deals-up-count"></span></h2>
+    <div class="deals-grid" id="deals-upcoming"></div>
+  </section>
+
+  <!-- Чистка -->
+  <section class="view" id="view-clean" hidden>
+    <header class="page-head">
+      <div><h1>Чистка</h1><p class="sub">Кэши и временные файлы. Игры и сохранения не трогаются.</p></div>
+      <button type="button" class="btn" id="clean-reload">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></svg>
+        <span>Пересчитать</span>
+      </button>
+    </header>
+    <div class="card">
+      <div id="clean-list"></div>
+      <div class="clean-foot">
+        <div class="clean-sum">Будет освобождено <b id="clean-total">—</b></div>
+        <button type="button" class="btn primary" id="clean-go" disabled><span>Очистить выбранное</span></button>
+      </div>
+    </div>
+    <div id="clean-result"></div>
+    <div id="clean-stale"></div>
+  </section>
+
+  <!-- Сеть -->
+  <section class="view" id="view-net" hidden>
+    <header class="page-head">
+      <div><h1>Сеть</h1><p class="sub">TCP-пинг до серверов, обновляется каждые 5 секунд</p></div>
+      <div class="seg" id="net-range">
+        <button type="button" data-v="5">5 мин</button>
+        <button type="button" data-v="15">15 мин</button>
+        <button type="button" data-v="30" class="on">30 мин</button>
+        <button type="button" data-v="60">1 час</button>
+      </div>
+    </header>
+    <div class="card">
+      <div class="card-head"><h2>Задержка</h2><div class="legend" id="net-legend"></div></div>
+      <div class="chart" id="net-chart"></div>
+    </div>
+    <div class="ping-cards" id="net-cards"></div>
+  </section>
+
+  <!-- Настройки -->
+  <section class="view" id="view-settings" hidden>
+    <header class="page-head">
+      <div><h1>Настройки</h1><p class="sub">Изменения применяются после «Сохранить»</p></div>
+      <button type="button" class="btn primary" id="set-save"><span>Сохранить</span></button>
+    </header>
+
+    <form id="set-form" class="settings" autocomplete="off" novalidate>
+      <div class="card tall">
+        <div class="card-head"><h2>Режим игры</h2></div>
+        <div class="fields">
+          <label class="field-switch">
+            <span class="switch"><input type="checkbox" id="set-gm-auto"><span class="slider"></span></span>
+            <span><b>Включать автоматически</b><small>Когда запускается игра</small></span>
+          </label>
+          <label class="field-switch">
+            <span class="switch"><input type="checkbox" id="set-gm-power"><span class="slider"></span></span>
+            <span><b>Максимальный план питания</b><small>На время игры, потом вернётся прежний</small></span>
+          </label>
+          <label class="field-switch">
+            <span class="switch"><input type="checkbox" id="set-gm-kill"><span class="slider"></span></span>
+            <span><b>Закрывать фоновые программы</b><small>Из списка ниже, при старте игры</small></span>
+          </label>
+          <label class="field">
+            <span>Что закрывать</span>
+            <textarea class="input" id="set-gm-list" rows="7" spellcheck="false" placeholder="по одному имени процесса в строке"></textarea>
+            <small>Имя процесса, можно без .exe. Системные процессы не трогаются.</small>
+          </label>
+          <div class="kill-line">
+            <button type="button" class="btn" id="set-kill-now"><span>Закрыть эти программы сейчас</span></button>
+            <span class="small muted" id="set-kill-result">по сохранённому списку</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Раздачи</h2></div>
+        <div class="fields">
+          <label class="field-switch">
+            <span class="switch"><input type="checkbox" id="set-deals-enabled"><span class="slider"></span></span>
+            <span><b>Следить за бесплатными играми</b><small>Epic Games, Steam, GOG</small></span>
+          </label>
+          <label class="field-switch">
+            <span class="switch"><input type="checkbox" id="set-deals-notify"><span class="slider"></span></span>
+            <span><b>Уведомлять о новых раздачах</b></span>
+          </label>
+          <label class="field">
+            <span>Проверять каждые, часов</span>
+            <input type="number" class="input" id="set-deals-interval" min="1" max="168" step="1">
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Сессии</h2></div>
+        <div class="fields">
+          <label class="field-switch">
+            <span class="switch"><input type="checkbox" id="set-notify-end"><span class="slider"></span></span>
+            <span><b>Итог после игры</b><small>Уведомление, сколько наиграно, когда закрываешь игру</small></span>
+          </label>
+          <label class="field">
+            <span>Лимит в день, минут</span>
+            <input type="number" class="input" id="set-limit" min="0" max="1440" step="5">
+            <small>0 — выключено. Когда наиграешь больше — придёт уведомление.</small>
+          </label>
+          <label class="field">
+            <span>«Давно не играл» — после, дней</span>
+            <input type="number" class="input" id="set-stale" min="1" max="3650" step="1">
+            <small>Такие игры предлагаются к удалению, чтобы освободить место</small>
+          </label>
+        </div>
+      </div>
+
+      <div class="card full">
+        <div class="card-head">
+          <h2>Цели пинга</h2>
+          <button type="button" class="btn sm" id="set-ping-add"><span>+ Добавить цель</span></button>
+        </div>
+        <div class="ed-row ed-ping row-head"><span>Название</span><span>Адрес</span><span>Порт</span><span></span></div>
+        <div id="set-ping-list"></div>
+      </div>
+
+      <div class="card full">
+        <div class="card-head">
+          <h2>Свои игры</h2>
+          <button type="button" class="btn sm" id="set-games-add"><span>+ Добавить игру</span></button>
+        </div>
+        <p class="small muted form-note">Игры не из Steam и Epic. Папка нужна, чтобы узнавать запущенную игру и считать размер; запуск — путь к exe или лаунчеру.</p>
+        <div class="ed-row ed-game row-head"><span>Название</span><span>Папка игры</span><span>Запуск (exe или ссылка)</span><span></span></div>
+        <div id="set-games-list"></div>
+      </div>
+    </form>
+
+    <p class="hint">Панель работает в фоне, иконка в трее. Адрес: http://127.0.0.1:8790</p>
+  </section>
+
+</main>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="tip" class="tip" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
