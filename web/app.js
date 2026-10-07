@@ -583,6 +583,8 @@ async function homePoll() {
     const st = await apiGet('/api/state');
     home.offset = (st.now || Date.now() / 1000) - Date.now() / 1000;  // разница часов сервера и браузера
     renderHome(st);
+    // сервер нашёл обновление позже, чем открылась панель — показать плашку сразу, а не через полчаса
+    if (st.update && $('#update-bar').dataset.version !== st.update.version) checkUpdate();
   } catch (e) { fail(e); } finally { home.busy = false; }
 }
 
@@ -1570,7 +1572,7 @@ function init() {
   $('#update-notes').addEventListener('click', () => { const page = $('#update-bar').dataset.page; if (page) openUrl(page); });
   $('#update-hide').addEventListener('click', () => { updateHidden = $('#update-bar').dataset.version; $('#update-bar').hidden = true; });
   checkUpdate();
-  setInterval(checkUpdate, 30 * 60 * 1000);
+  setInterval(checkUpdate, 10 * 60 * 1000);
 
   // Главная
   $('#gm-toggle').addEventListener('click', toggleGamemode);
