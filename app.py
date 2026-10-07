@@ -1,6 +1,8 @@
 """GameHub — точка входа. Запуск: .venv\\Scripts\\pythonw.exe app.py (без консоли) или python app.py."""
+import json
 import logging
 import os
+import secrets
 import sys
 import threading
 import time
@@ -37,6 +39,10 @@ def _api_error(text, code=400):
     return server.ApiError(text, code)
 
 
+# нижние границы чисел из панели: ноль в интервале = цикл без пауз и долбёжка чужих API
+MIN_VALUES = {"poll_seconds": 2, "ping.interval_seconds": 1, "deals.interval_hours": 1}
+
+
 def check_partial(partial: dict, defaults: dict, path="") -> None:
     """Проверка частичного конфига из панели: только известные ключи и те же типы."""
     for key, value in partial.items():
@@ -47,7 +53,7 @@ def check_partial(partial: dict, defaults: dict, path="") -> None:
         if isinstance(base, bool):
             ok = isinstance(value, bool)
         elif isinstance(base, (int, float)):
-            ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+            ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value >= MIN_VALUES.get(name, 0)
         else:
             ok = isinstance(value, type(base))
         if not ok:
@@ -424,7 +430,8 @@ class Hub:
                     fn()
                 except Exception:
                     log.exception("ошибка в цикле %s", name)
-                if self.stop_event.wait(interval_fn()):
+                # минимум 1 с: ноль или минус в config.json не должен крутить цикл вхолостую
+                if self.stop_event.wait(max(1.0, float(interval_fn()))):
                     return
         threading.Thread(target=run, name=name, daemon=True).start()
 
@@ -599,23 +606,40 @@ def find_running(ports) -> int | None:
     return None
 
 
+INSTANCE_FILE = "instance.json"   # порт и ключ запущенного GameHub (папка данных доступна только владельцу)
+
+
+def write_instance(port: int, token: str) -> None:
+    path = config.DATA_DIR / INSTANCE_FILE
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"port": port, "token": token}), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def read_token() -> str:
+    try:
+        return str(json.loads((config.DATA_DIR / INSTANCE_FILE).read_text(encoding="utf-8"))["token"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+
+
 def show_running(port: int) -> None:
     """Попросить запущенный GameHub показать окно (второй запуск ярлыка)."""
     import urllib.request
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/window/show", data=b"{}", method="POST",
-                                 headers={"X-GameHub": "1", "Content-Type": "application/json"})
+                                 headers={"X-GameHub": read_token(), "Content-Type": "application/json"})
     try:
         _local_open(req, timeout=5).close()
     except Exception:
         log.exception("не удалось показать окно запущенного GameHub")
 
 
-def bind_server(hub, ports):
+def bind_server(hub, ports, token):
     """Сервер на первом свободном порту из диапазона."""
     import server
     for port in ports:
         try:
-            return server.make_server(hub, port), port
+            return server.make_server(hub, port, token), port
         except OSError:
             continue
     raise OSError(f"все порты {ports.start}–{ports.stop - 1} заняты")
@@ -624,7 +648,11 @@ def bind_server(hub, ports):
 def main() -> None:
     setup_logging()
     cfg = load_config()
-    ports = range(cfg["port"], cfg["port"] + PORT_TRIES)
+    base = cfg["port"]
+    if not isinstance(base, int) or not 1024 <= base <= 65535 - PORT_TRIES:
+        log.warning("порт %r в config.json не подходит — беру %d", base, config.DEFAULTS["port"])
+        base = config.DEFAULTS["port"]
+    ports = range(base, base + PORT_TRIES)
     running = find_running(ports)
     if running:
         show_running(running)
@@ -632,17 +660,19 @@ def main() -> None:
 
     db = DB(config.DATA_DIR / "gamehub.db")
     hub = Hub(cfg, db)
+    token = secrets.token_urlsafe(32)
     try:
-        httpd, port = bind_server(hub, ports)
+        httpd, port = bind_server(hub, ports, token)
     except OSError as e:
         log.error("%s", e)
         notify.toast("GameHub не запущен", str(e))
         return
-    url = f"http://127.0.0.1:{port}"
+    write_instance(port, token)
+    url = f"http://127.0.0.1:{port}/?t={token}"   # ключ панель заберёт из адреса и уберёт его оттуда
     hub.url = url
     threading.Thread(target=httpd.serve_forever, name="http", daemon=True).start()
     hub.start_background()
-    log.info("GameHub %s запущен: %s, игр: %d", updater.VERSION, url, len(hub.games))
+    log.info("GameHub %s запущен: порт %d, игр: %d", updater.VERSION, port, len(hub.games))
 
     def on_exit():
         hub.shutdown()

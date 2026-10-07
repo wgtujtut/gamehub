@@ -171,11 +171,17 @@ def merge(epic: dict, gp: list) -> dict:
     return {"now": now, "upcoming": list(epic["upcoming"])}
 
 
+MAX_RESPONSE = 10_000_000   # ответ Epic ~40 КБ; больше 10 МБ — что-то не то
+
+
 def fetch_json(url: str, timeout: float = 20):
     """GET и разбор JSON. Ошибки пробрасывает."""
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 GameHub"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+        data = resp.read(MAX_RESPONSE + 1)
+    if len(data) > MAX_RESPONSE:
+        raise ValueError("слишком большой ответ")
+    return json.loads(data)
 
 
 def fetch_all(now: float, fetch=fetch_json) -> dict:

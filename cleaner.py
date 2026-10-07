@@ -28,6 +28,28 @@ def _expand(patterns):
     return result
 
 
+def _norm(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
+def is_safe_root(path, env=None):
+    r"""Можно ли чистить эту папку. Защита от переменных окружения, указывающих не туда
+    (TEMP=C:\ или PIP_CACHE_DIR=D:\ стёрли бы диск): корень диска, папка верхнего уровня,
+    профиль, Windows, Program Files и любые их родители — никогда."""
+    env = os.environ if env is None else env
+    p = _norm(path)
+    drive, rest = os.path.splitdrive(p)
+    if len([x for x in rest.split(os.sep) if x]) < 2:     # C:\ и C:\что-то
+        return False
+    keys = ("USERPROFILE", "SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData", "APPDATA", "LOCALAPPDATA")
+    for key in keys:
+        if env.get(key):
+            q = _norm(env[key])
+            if p == q or q.startswith(p.rstrip(os.sep) + os.sep):
+                return False
+    return True
+
+
 def _is_link(path):
     return os.path.islink(path) or os.path.isjunction(path)
 
@@ -68,7 +90,7 @@ def targets(steam_libs, env=None):
     ]
     result = []
     for tid, name, patterns, note, default in raw:
-        paths = _expand(patterns)
+        paths = [p for p in _expand(patterns) if is_safe_root(p, env)]
         if paths:
             # из temp удаляем только то, что не трогали сутки: свежие файлы могут быть нужны запущенным программам
             min_age = 86400 if tid == "temp" else 0
@@ -157,8 +179,8 @@ def clean(paths, min_age=0, now=None):
     cutoff = (time.time() if now is None else now) - min_age if min_age else float("inf")
     res = {"freed": 0, "deleted": 0, "skipped": 0}
     for path in paths:
-        if _is_link(path):
-            res["skipped"] += 1  # папка-ссылка — не трогаем целиком
+        if _is_link(path) or not is_safe_root(path):
+            res["skipped"] += 1  # папка-ссылка или опасный корень — не трогаем целиком
             continue
         if not os.path.isdir(path):
             continue

@@ -27,7 +27,7 @@
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pip install -r requirements-lock.txt
 .venv\Scripts\python -m pytest -q        # тесты
 .venv\Scripts\python app.py              # запуск из исходников
 .venv\Scripts\python build.py            # установщик → dist\

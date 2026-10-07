@@ -7,12 +7,14 @@ import subprocess
 import tempfile
 import urllib.request
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 REPO = "wgtujtut/gamehub"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 # скачиваем установщик только из релизов своего репозитория
 ASSET_PREFIX = f"https://github.com/{REPO}/releases/download/"
 SETUP_RE = re.compile(r"^GameHub-Setup-[\d.]+\.exe$")
+MAX_JSON = 1_000_000          # ответ API релизов
+MAX_SETUP = 300_000_000       # установщик (сейчас ~17 МБ)
 
 log = logging.getLogger("gamehub.updater")
 
@@ -47,7 +49,7 @@ def fetch_latest(timeout: float = 15) -> dict | None:
     req = urllib.request.Request(API_URL, headers={"User-Agent": f"GameHub/{VERSION}",
                                                    "Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return parse_release(json.loads(resp.read()))
+        return parse_release(json.loads(resp.read(MAX_JSON + 1)[:MAX_JSON]))
 
 
 def download_and_run(url: str) -> None:
@@ -58,10 +60,15 @@ def download_and_run(url: str) -> None:
     name = url.rsplit("/", 1)[-1]
     if not SETUP_RE.match(name):
         raise ValueError("неожиданное имя файла")
-    path = os.path.join(tempfile.gettempdir(), name)
+    # своя новая папка: заранее подложенный файл с тем же именем не подменит установщик
+    path = os.path.join(tempfile.mkdtemp(prefix="gamehub-update-"), name)
     req = urllib.request.Request(url, headers={"User-Agent": f"GameHub/{VERSION}"})
+    size = 0
     with urllib.request.urlopen(req, timeout=120) as resp, open(path, "wb") as f:
         while chunk := resp.read(1 << 16):
+            size += len(chunk)
+            if size > MAX_SETUP:
+                raise ValueError("установщик подозрительно большой")
             f.write(chunk)
     log.info("обновление скачано: %s", path)
     subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],

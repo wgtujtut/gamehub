@@ -253,3 +253,27 @@ def test_pip_cache_dir_env(tmp_path):
     (tmp_path / "l" / "pip" / "cache").mkdir(parents=True)
     ts = {t["id"]: t for t in cleaner.targets([], env={"LOCALAPPDATA": str(tmp_path / "l"), "PIP_CACHE_DIR": str(moved)})}
     assert ts["pip"]["paths"] == [str(moved)]
+
+
+def test_is_safe_root():
+    env = {"USERPROFILE": r"C:\Users\me", "SystemRoot": r"C:\Windows", "LOCALAPPDATA": r"C:\Users\me\AppData\Local"}
+    for bad in ["C:\\", "D:\\", r"D:\cache", r"C:\Users", r"C:\Users\me", r"C:\Users\me\AppData", r"C:\Users\me\AppData\Local", r"C:\Windows"]:
+        assert not cleaner.is_safe_root(bad, env), bad
+    for ok in [r"D:\cache\pip", r"C:\Users\me\AppData\Local\Temp", r"C:\Users\me\AppData\Local\pip\cache"]:
+        assert cleaner.is_safe_root(ok, env), ok
+
+
+def test_targets_skip_dangerous_env(tmp_path):
+    # TEMP и PIP_CACHE_DIR указывают на корень диска — такие цели не предлагаются вовсе
+    drive = os.path.splitdrive(str(tmp_path))[0] + "\\"
+    ts = {t["id"]: t for t in cleaner.targets([], env={"TEMP": drive, "PIP_CACHE_DIR": drive, "LOCALAPPDATA": str(tmp_path)})}
+    assert "temp" not in ts and "pip" not in ts
+
+
+def test_clean_refuses_dangerous_root(monkeypatch, tmp_path):
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "important.txt").write_text("x")
+    monkeypatch.setattr(cleaner, "is_safe_root", lambda p, env=None: False)
+    res = cleaner.clean([str(victim)])
+    assert res["skipped"] == 1 and (victim / "important.txt").exists()

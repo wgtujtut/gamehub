@@ -1,4 +1,5 @@
 """HTTP-сервер панели: отдаёт web/ и JSON API. Вся логика — в объекте hub (app.Hub)."""
+import hmac
 import json
 import logging
 import mimetypes
@@ -37,7 +38,8 @@ def _need(body, key, kind: type = str):
     return value
 
 
-def make_handler(hub, port):
+def make_handler(hub, port, token):
+    """token — секрет этого запуска: без него /api/* не отвечает (другие программы и пользователи ПК его не знают)."""
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     get_routes = {
@@ -100,14 +102,21 @@ def make_handler(hub, port):
             self._json({"error": "bad host"}, 403)
             return False
 
+        def _auth_ok(self):
+            # ключ в заголовке: чужой сайт не может его прислать (CORS), а чужая программа — не знает
+            if hmac.compare_digest(self.headers.get("X-GameHub", "").encode("utf-8", "replace"), token.encode()):
+                return True
+            self._json({"error": "forbidden"}, 403)
+            return False
+
         def _run(self, fn, arg):
             try:
                 self._json(fn(arg))
             except ApiError as e:
                 self._json({"error": str(e)}, e.code)
             except Exception as e:
-                log.exception("ошибка обработки %s", self.path)
-                self._json({"error": f"внутренняя ошибка: {e}"}, 500)
+                log.exception("ошибка обработки %s", urlparse(self.path).path)
+                self._json({"error": "внутренняя ошибка, подробности в gamehub.log"}, 500)
 
         # --- GET ---
         def do_GET(self):
@@ -128,6 +137,8 @@ def make_handler(hub, port):
             fn = get_routes.get(path)
             if fn is None:
                 return self._json({"error": "not found"}, 404)
+            if not self._auth_ok():
+                return
             self._run(fn, parse_qs(url.query))
 
         def _cover(self, game_id, query):
@@ -150,19 +161,20 @@ def make_handler(hub, port):
         def do_POST(self):
             if not self._host_ok():
                 return
-            # свой заголовок: браузер не даст чужому сайту прислать его без CORS-разрешения
-            if self.headers.get("X-GameHub") != "1":
-                return self._json({"error": "forbidden"}, 403)
-            fn = post_routes.get(urlparse(self.path).path)
-            if fn is None:
-                return self._json({"error": "not found"}, 404)
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = -1
             if length < 0 or length > MAX_BODY:
+                self.close_connection = True
                 return self._json({"error": "bad length"}, 413)
+            # тело читаем до любых отказов, иначе непрочитанные данные рвут соединение
             raw = self.rfile.read(length) if length else b"{}"
+            if not self._auth_ok():
+                return
+            fn = post_routes.get(urlparse(self.path).path)
+            if fn is None:
+                return self._json({"error": "not found"}, 404)
             try:
                 body = json.loads(raw or b"{}")
             except ValueError:
@@ -174,8 +186,8 @@ def make_handler(hub, port):
     return Handler
 
 
-def make_server(hub, port):
+def make_server(hub, port, token):
     """Создать сервер на 127.0.0.1. Порт занят — OSError."""
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(hub, port))
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(hub, port, token))
     server.daemon_threads = True
     return server

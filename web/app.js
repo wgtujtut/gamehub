@@ -210,14 +210,25 @@ const lastOf = g => Math.max(g.last || 0, g.last_played || 0);
 
 /* ================= API ================= */
 
-const POST_HEADERS = {'Content-Type': 'application/json', 'X-GameHub': '1'};
+// Ключ доступа к API: окно открывает панель с ?t=<ключ>. Запоминаем его на сессию и убираем из адреса.
+const TOKEN = (() => {
+  const fromUrl = new URLSearchParams(location.search).get('t');
+  if (fromUrl) {
+    try { sessionStorage.setItem('gh-token', fromUrl); } catch { /* хранилище недоступно */ }
+    history.replaceState(null, '', location.pathname + location.hash);
+    return fromUrl;
+  }
+  try { return sessionStorage.getItem('gh-token') || ''; } catch { return ''; }
+})();
+
+const POST_HEADERS = {'Content-Type': 'application/json'};
 let offline = false;
 let retryTimer = null;
 
 async function request(path, opts = {}) {
   let res;
   try {
-    res = await fetch(path, {cache: 'no-store', ...opts});
+    res = await fetch(path, {cache: 'no-store', ...opts, headers: {'X-GameHub': TOKEN, ...(opts.headers || {})}});
   } catch {
     setOffline(true);
     const err = new Error('Нет связи с GameHub');
@@ -227,6 +238,7 @@ async function request(path, opts = {}) {
   setOffline(false);
   let data = null;
   try { data = await res.json(); } catch { /* не JSON */ }
+  if (res.status === 403) throw new Error('Нет доступа: открой GameHub заново через ярлык или трей');
   if (!res.ok) throw new Error((data && data.error) || `Ошибка сервера (${res.status})`);
   if (data == null) throw new Error('Сервер прислал непонятный ответ');
   return data;

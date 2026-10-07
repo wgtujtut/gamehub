@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 import deals
 from conftest import FIXTURES
 
@@ -274,3 +276,21 @@ def test_pick_new():
     assert [d["key"] for d in deals.pick_new(data, db)] == ["epic:a", "gp:b"]
     assert deals.pick_new(data, db) == []
     assert "epic:c" not in db.seen
+
+
+def test_fetch_json_rejects_huge_response(monkeypatch):
+    import io
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(deals, "MAX_RESPONSE", 10)
+    monkeypatch.setattr(deals.urllib.request, "urlopen", lambda req, timeout: Resp(b'{"a": "0123456789"}'))
+    with pytest.raises(ValueError):
+        deals.fetch_json("https://example.com")
+    monkeypatch.setattr(deals.urllib.request, "urlopen", lambda req, timeout: Resp(b'{"a": 1}'))
+    assert deals.fetch_json("https://example.com") == {"a": 1}

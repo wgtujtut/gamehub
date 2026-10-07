@@ -61,7 +61,7 @@ def test_bind_server_skips_busy_port():
     busy.listen()
     port = busy.getsockname()[1]
     try:
-        httpd, got = app.bind_server(type("H", (), {"cfg": {}})(), range(port, port + 5))
+        httpd, got = app.bind_server(type("H", (), {"cfg": {}})(), range(port, port + 5), "tok")
         httpd.server_close()
         assert got != port
     finally:
@@ -158,3 +158,41 @@ def test_port_busy():
         assert app.port_busy(s.getsockname()[1])
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("partial", [
+    {"poll_seconds": 0},
+    {"poll_seconds": 1},
+    {"ping": {"interval_seconds": 0}},
+    {"deals": {"interval_hours": 0}},
+    {"deals": {"interval_hours": 0.5}},
+])
+def test_check_partial_rejects_zero_intervals(partial):
+    with pytest.raises(server.ApiError):
+        app.check_partial(partial, config.DEFAULTS)
+
+
+def test_check_partial_allows_min_intervals():
+    app.check_partial({"poll_seconds": 2, "ping": {"interval_seconds": 1}, "deals": {"interval_hours": 1}},
+                      config.DEFAULTS)
+
+
+def test_loop_clamps_zero_interval():
+    import threading
+    import time
+    hub = FakeHub([])
+    hub.stop_event = threading.Event()
+    calls = []
+    hub._loop("t", lambda: 0, lambda: calls.append(1))
+    time.sleep(0.3)
+    hub.stop_event.set()
+    assert len(calls) == 1      # ноль в настройках не крутит цикл без пауз
+
+
+def test_instance_token_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    assert app.read_token() == ""
+    app.write_instance(8790, "abc")
+    assert app.read_token() == "abc"
+    (tmp_path / app.INSTANCE_FILE).write_text("мусор", encoding="utf-8")
+    assert app.read_token() == ""
