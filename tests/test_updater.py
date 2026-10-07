@@ -51,3 +51,27 @@ def test_download_rejects_foreign_url():
         updater.download_and_run("https://evil.com/GameHub-Setup-1.0.0.exe")
     with pytest.raises(ValueError):
         updater.download_and_run("https://github.com/wgtujtut/gamehub/releases/download/v1/run.bat")
+
+
+@pytest.mark.parametrize("out, ok", [
+    ('{"status":"UnknownError","thumb":"%s"}' % updater.SIGNER_THUMBPRINT, True),     # наш самодельный сертификат
+    ('{"status":"Valid","thumb":"%s"}' % updater.SIGNER_THUMBPRINT.lower(), True),
+    ('{"status":"HashMismatch","thumb":"%s"}' % updater.SIGNER_THUMBPRINT, False),    # файл изменён после подписи
+    ('{"status":"NotSigned","thumb":""}', False),
+    ('{"status":"Valid","thumb":"AAAA"}', False),                                     # чужой сертификат
+    ('{"status":"UnknownError","thumb":null}', False),
+    ("мусор", False),
+    ("", False),
+    ("[]", False),
+])
+def test_signature_ok(out, ok):
+    assert updater.signature_ok("x.exe", read=lambda p: out) is ok
+
+
+def test_signature_real_files(tmp_path):
+    # настоящая проверка Windows: python.exe подписан, но чужим сертификатом (PSF) — не проходит
+    import shutil
+    import sys
+    exe = tmp_path / "foreign.exe"
+    shutil.copy(sys.executable, exe)
+    assert updater.signature_ok(str(exe)) is False

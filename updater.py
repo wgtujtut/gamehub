@@ -7,16 +7,49 @@ import subprocess
 import tempfile
 import urllib.request
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 REPO = "wgtujtut/gamehub"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 # скачиваем установщик только из релизов своего репозитория
 ASSET_PREFIX = f"https://github.com/{REPO}/releases/download/"
 SETUP_RE = re.compile(r"^GameHub-Setup-[\d.]+\.exe$")
+# отпечаток сертификата, которым build.py подписывает установщик. Ключ лежит только у автора
+# (хранилище сертификатов Windows), поэтому даже с угнанным GitHub подделку автообновление не поставит
+SIGNER_THUMBPRINT = "BCC96AC630CE584CF27431B13871848550356399"
 MAX_JSON = 1_000_000          # ответ API релизов
 MAX_SETUP = 300_000_000       # установщик (сейчас ~17 МБ)
 
 log = logging.getLogger("gamehub.updater")
+
+# путь к файлу — только через переменную окружения, не в тексте команды
+_SIG_PS = ("$s = Get-AuthenticodeSignature -LiteralPath $env:GH_FILE; "
+           "[pscustomobject]@{status=[string]$s.Status; thumb=[string]$s.SignerCertificate.Thumbprint} "
+           "| ConvertTo-Json -Compress")
+
+
+class SignatureError(Exception):
+    """Подпись установщика не наша — ставить нельзя."""
+
+
+def _read_signature(path: str) -> str:
+    res = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _SIG_PS],
+                         env={**os.environ, "GH_FILE": path}, capture_output=True, text=True,
+                         timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+    return res.stdout
+
+
+def signature_ok(path: str, read=_read_signature) -> bool:
+    """Файл подписан нашим сертификатом и не изменён после подписи.
+    Сертификат самодельный, поэтому Windows отвечает UnknownError (корень не доверен) —
+    это нормально; испорченный файл дал бы HashMismatch, неподписанный — NotSigned."""
+    try:
+        data = json.loads(read(path))
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    return (data.get("status") in ("Valid", "UnknownError")
+            and str(data.get("thumb") or "").upper() == SIGNER_THUMBPRINT)
 
 
 def parse_version(s: str) -> tuple[int, ...]:
@@ -70,6 +103,9 @@ def download_and_run(url: str) -> None:
             if size > MAX_SETUP:
                 raise ValueError("установщик подозрительно большой")
             f.write(chunk)
-    log.info("обновление скачано: %s", path)
+    if not signature_ok(path):
+        os.remove(path)
+        raise SignatureError("подпись установщика не совпала")
+    log.info("обновление скачано и подпись проверена: %s", path)
     subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
                      creationflags=subprocess.DETACHED_PROCESS)

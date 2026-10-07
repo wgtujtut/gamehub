@@ -410,6 +410,11 @@ class Hub:
         def run():
             try:
                 updater.download_and_run(url)
+            except updater.SignatureError:
+                log.error("подпись обновления не совпала — не устанавливаю")
+                notify.toast("Обновление не установлено", "Подпись файла не совпала с подписью автора. "
+                                                         "Возможно, это подделка — не скачивай его вручную")
+                return
             except Exception:
                 log.exception("обновление не скачалось")
                 notify.toast("Обновление не удалось", "Попробуй позже или скачай вручную с GitHub")
