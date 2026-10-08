@@ -56,18 +56,42 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\GameHub.exe"; Description: "Запустить GameHub"; Flags: nowait postinstall
 
 [Code]
-procedure KillGameHub;
+function GameHubRunning: Boolean;
 var
   Code: Integer;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM GameHub.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  // find вернёт 0, если в списке процессов есть GameHub.exe
+  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq GameHub.exe" /NH | find /I "GameHub.exe" >nul',
+                 '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+end;
+
+// Закрыть GameHub (трей и окно) и дождаться, пока процессы правда исчезнут:
+// пока они живы, их файлы заняты, и установка поверх них ломает программу.
+function KillGameHub: Boolean;
+var
+  Code, I: Integer;
+begin
+  for I := 1 to 30 do
+  begin
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM GameHub.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+    Sleep(500);
+    if not GameHubRunning then
+    begin
+      Sleep(500);   // система отпускает файлы не мгновенно
+      Result := True;
+      Exit;
+    end;
+  end;
+  Result := False;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  KillGameHub;
-  Sleep(800);
-  Result := '';
+  // до удаления старых файлов: не закрылся — отменяем, установленная версия остаётся рабочей
+  if KillGameHub then
+    Result := ''
+  else
+    Result := 'Не удалось закрыть GameHub. Закрой его (трей → Выход) и запусти установку ещё раз.';
 end;
 
 function InitializeUninstall(): Boolean;
